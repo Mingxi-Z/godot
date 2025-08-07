@@ -2253,6 +2253,86 @@ void TextureStorage::_update_render_target(RenderTarget *rt) {
 			texture->gl_type_cache = !rt->hdr ? GL_UNSIGNED_BYTE : GL_FLOAT; // to set HDR format size to 8 and keep 4 for LDR format
 			texture->gl_internal_format_cache = rt->color_internal_format;
 			texture->tex_id = rt->color;
+
+			// Create MSAA textures and FBO if needed
+			if (rt->msaa_2d.mode != RS::VIEWPORT_MSAA_DISABLED) {
+				GLsizei samples = 0;
+				switch (rt->msaa_2d.mode) {
+					case RS::VIEWPORT_MSAA_2X:
+						samples = 2;
+						break;
+					case RS::VIEWPORT_MSAA_4X:
+						samples = 4;
+						break;
+					case RS::VIEWPORT_MSAA_8X:
+						samples = 8;
+						break;
+					default:
+						samples = 1;
+						break;
+				}
+
+				// Check if we can use the optimized extension
+				if (config->rt_msaa_supported) {
+					// Use GL_EXT_multisampled_render_to_texture for automatic resolve
+					// This keeps MSAA data in tile memory on mobile GPUs and auto-resolves
+					rt->msaa_2d.samples = samples;
+					rt->msaa_2d.needs_resolve = false; // Extension handles resolve automatically
+					
+					glGenFramebuffers(1, &rt->msaa_2d.fbo);
+					glBindFramebuffer(GL_FRAMEBUFFER, rt->msaa_2d.fbo);
+					
+#ifdef ANDROID_ENABLED
+					// Use the extension to attach texture with MSAA directly
+					config->eglFramebufferTexture2DMultisampleEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 
+						texture_target, rt->color, 0, samples);
+					config->eglFramebufferTexture2DMultisampleEXT(GL_FRAMEBUFFER, 
+						rt->depth_has_stencil ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT,
+						texture_target, rt->depth, 0, samples);
+#endif
+					
+					GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+					if (status == GL_FRAMEBUFFER_COMPLETE) {
+						rt->msaa_2d.color = 0; // No separate MSAA texture needed with extension
+						print_verbose("Using GL_EXT_multisampled_render_to_texture for optimized 2D MSAA");
+					} else {
+						// Fallback to traditional MSAA
+						glDeleteFramebuffers(1, &rt->msaa_2d.fbo);
+						rt->msaa_2d.fbo = 0;
+						rt->msaa_2d.mode = RS::VIEWPORT_MSAA_DISABLED;
+						WARN_PRINT("GL_EXT_multisampled_render_to_texture failed, disabling MSAA. Status: " + get_framebuffer_error(status));
+					}
+				} else {
+					// Traditional MSAA approach using renderbuffers (2D only needs color)
+					rt->msaa_2d.samples = samples;
+					rt->msaa_2d.needs_resolve = true; // Traditional MSAA requires manual resolve
+					
+					// Create MSAA color renderbuffer  
+					glGenRenderbuffers(1, &rt->msaa_2d.color);
+					glBindRenderbuffer(GL_RENDERBUFFER, rt->msaa_2d.color);
+					glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, rt->color_internal_format, rt->size.x, rt->size.y);
+					GLES3::Utilities::get_singleton()->render_buffer_allocated_data(rt->msaa_2d.color, rt->size.x * rt->size.y * rt->color_format_size * samples, "Render target MSAA color renderbuffer");
+
+					// Create MSAA framebuffer (2D doesn't need depth - depth testing is disabled in 2D rendering)
+					glGenFramebuffers(1, &rt->msaa_2d.fbo);
+					glBindFramebuffer(GL_FRAMEBUFFER, rt->msaa_2d.fbo);
+					glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rt->msaa_2d.color);
+
+					GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+					if (status != GL_FRAMEBUFFER_COMPLETE) {
+						WARN_PRINT("Could not create MSAA render target, status: " + get_framebuffer_error(status));
+						// Clean up and fallback to non-MSAA
+						glDeleteFramebuffers(1, &rt->msaa_2d.fbo);
+						GLES3::Utilities::get_singleton()->render_buffer_free_data(rt->msaa_2d.color);
+						glDeleteRenderbuffers(1, &rt->msaa_2d.color);
+						rt->msaa_2d.color = 0;
+						rt->msaa_2d.fbo = 0;
+						rt->msaa_2d.mode = RS::VIEWPORT_MSAA_DISABLED;
+					}
+				}
+
+				glBindFramebuffer(GL_FRAMEBUFFER, rt->fbo);
+			}
 			texture->width = rt->size.x;
 			texture->alloc_width = rt->size.x;
 			texture->height = rt->size.y;
@@ -2461,6 +2541,22 @@ void TextureStorage::_clear_render_target(RenderTarget *rt) {
 
 	rt->overridden.velocity = RID();
 	rt->overridden.is_overridden = false;
+
+	if (rt->msaa_2d.color) {
+		GLES3::Utilities::get_singleton()->render_buffer_free_data(rt->msaa_2d.color);
+		glDeleteRenderbuffers(1, &rt->msaa_2d.color);
+		rt->msaa_2d.color = 0;
+	}
+
+	if (rt->msaa_2d.fbo) {
+		glDeleteFramebuffers(1, &rt->msaa_2d.fbo);
+		rt->msaa_2d.fbo = 0;
+	}
+
+	// Reset MSAA state
+	rt->msaa_2d.mode = RS::VIEWPORT_MSAA_DISABLED;
+	rt->msaa_2d.needs_resolve = false;
+	rt->msaa_2d.samples = 1;
 
 	if (rt->backbuffer_fbo != 0) {
 		glDeleteFramebuffers(1, &rt->backbuffer_fbo);
@@ -2672,6 +2768,51 @@ bool TextureStorage::render_target_get_transparent(RID p_render_target) const {
 	return rt->is_transparent;
 }
 
+void TextureStorage::render_target_set_msaa_needs_resolve(RID p_render_target, bool p_needs_resolve) {
+	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+	ERR_FAIL_NULL(rt);
+
+	rt->msaa_2d.needs_resolve = p_needs_resolve;
+}
+
+bool TextureStorage::render_target_get_msaa_needs_resolve(RID p_render_target) const {
+	const RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+	ERR_FAIL_NULL_V(rt, false);
+
+	return rt->msaa_2d.needs_resolve;
+}
+
+void TextureStorage::render_target_do_msaa_resolve(RID p_render_target) {
+	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
+	ERR_FAIL_NULL(rt);
+
+	if (!rt->msaa_2d.needs_resolve || rt->msaa_2d.mode == RS::VIEWPORT_MSAA_DISABLED) {
+		return;
+	}
+
+	Config *config = Config::get_singleton();
+	
+	// If using GL_EXT_multisampled_render_to_texture, resolve is automatic
+	if (config->rt_msaa_supported && rt->msaa_2d.color == 0) {
+		// No manual resolve needed with the extension - it's done automatically
+		rt->msaa_2d.needs_resolve = false;
+		return;
+	}
+
+	// Traditional MSAA resolve for when extension is not available
+	if (!rt->msaa_2d.color) {
+		return;
+	}
+
+	// Resolve MSAA
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, rt->msaa_2d.fbo);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rt->fbo);
+	glBlitFramebuffer(0, 0, rt->size.x, rt->size.y, 0, 0, rt->size.x, rt->size.y, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+	// Mark as resolved
+	rt->msaa_2d.needs_resolve = false;
+}
+
 void TextureStorage::render_target_set_direct_to_screen(RID p_render_target, bool p_direct_to_screen) {
 	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
 	ERR_FAIL_NULL(rt);
@@ -2716,14 +2857,12 @@ void TextureStorage::render_target_set_msaa(RID p_render_target, RS::ViewportMSA
 	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
 	ERR_FAIL_NULL(rt);
 	ERR_FAIL_COND(rt->direct_to_screen);
-	if (p_msaa == rt->msaa) {
+	if (p_msaa == rt->msaa_2d.mode) {
 		return;
 	}
 
-	WARN_PRINT("2D MSAA is not yet supported for GLES3.");
-
 	_clear_render_target(rt);
-	rt->msaa = p_msaa;
+	rt->msaa_2d.mode = p_msaa;
 	_update_render_target(rt);
 }
 
@@ -2731,7 +2870,7 @@ RS::ViewportMSAA TextureStorage::render_target_get_msaa(RID p_render_target) con
 	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
 	ERR_FAIL_NULL_V(rt, RS::VIEWPORT_MSAA_DISABLED);
 
-	return rt->msaa;
+	return rt->msaa_2d.mode;
 }
 
 void TextureStorage::render_target_set_use_hdr(RID p_render_target, bool p_use_hdr_2d) {
@@ -2823,6 +2962,13 @@ GLuint TextureStorage::render_target_get_fbo(RID p_render_target) const {
 	RenderTarget *rt = render_target_owner.get_or_null(p_render_target);
 	ERR_FAIL_NULL_V(rt, 0);
 
+	// Automatically return MSAA FBO if 2D MSAA is enabled and available
+	if (rt->msaa_2d.mode != RS::VIEWPORT_MSAA_DISABLED && rt->msaa_2d.fbo != 0) {
+		// Mark for resolve - we need to cast away const since this is a state change
+		// Note: When using GL_EXT_multisampled_render_to_texture, resolve is automatic
+		const_cast<RenderTarget*>(rt)->msaa_2d.needs_resolve = true;
+		return rt->msaa_2d.fbo;
+	}
 	return rt->fbo;
 }
 

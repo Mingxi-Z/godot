@@ -2776,7 +2776,7 @@ void RasterizerSceneGLES3::_render_post_processing(const RenderDataGLES3 *p_rend
 	bool msaa3d_needs_resolve = rb->get_msaa_needs_resolve();
 	GLuint fbo_msaa_3d = rb->get_msaa3d_fbo();
 	GLuint fbo_int = rb->get_internal_fbo();
-	GLuint fbo_rt = texture_storage->render_target_get_fbo(render_target); // TODO if MSAA 2D is enabled and we're not using rt_msaa, get 2D render target here.
+	GLuint fbo_rt = texture_storage->render_target_get_fbo(render_target); // Now automatically handles 2D MSAA
 
 	// Check if we have glow enabled and if so, check if our buffers were allocated
 	bool glow_enabled = false;

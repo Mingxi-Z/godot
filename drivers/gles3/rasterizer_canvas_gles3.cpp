@@ -2214,7 +2214,10 @@ void RasterizerCanvasGLES3::canvas_begin(RID p_to_render_target, bool p_to_backb
 		GLES3::Texture *tex = texture_storage->get_texture(texture_storage->texture_gl_get_default(GLES3::DEFAULT_GL_TEXTURE_WHITE));
 		glBindTexture(GL_TEXTURE_2D, tex->tex_id);
 	} else {
-		glBindFramebuffer(GL_FRAMEBUFFER, render_target->fbo);
+		GLuint target_fbo = texture_storage->render_target_get_fbo(p_to_render_target);
+		
+		glBindFramebuffer(GL_FRAMEBUFFER, target_fbo);
+
 		glActiveTexture(GL_TEXTURE0 + config->max_texture_image_units - 4);
 		glBindTexture(GL_TEXTURE_2D, render_target->backbuffer);
 		if (render_target->backbuffer != 0) {
