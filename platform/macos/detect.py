@@ -1,4 +1,6 @@
 import os
+import platform
+import subprocess
 import sys
 from typing import TYPE_CHECKING
 
@@ -11,6 +13,47 @@ if TYPE_CHECKING:
 # To match other platforms
 STACK_SIZE = 8388608
 STACK_SIZE_SANITIZERS = 30 * 1024 * 1024
+
+
+def get_macos_version():
+    """
+    Detect the current macOS version and return appropriate deployment target.
+    """
+    try:
+        # Try platform.mac_ver() first
+        mac_version = platform.mac_ver()[0]
+        if mac_version:
+            parts = mac_version.split('.')
+            major = int(parts[0])
+            minor = int(parts[1]) if len(parts) > 1 else 0
+            
+            # For macOS 11+ (Big Sur and later), use major.minor format
+            if major >= 11:
+                return f"{major}.{minor}"
+            # For macOS 10.x, use 10.minor format  
+            elif major == 10:
+                return f"10.{minor}"
+    except:
+        pass
+    
+    try:
+        # Fallback to sw_vers command
+        result = subprocess.run(['sw_vers', '-productVersion'], capture_output=True, text=True)
+        if result.returncode == 0:
+            version = result.stdout.strip()
+            parts = version.split('.')
+            major = int(parts[0])
+            minor = int(parts[1]) if len(parts) > 1 else 0
+            
+            if major >= 11:
+                return f"{major}.{minor}"
+            elif major == 10:
+                return f"10.{minor}"
+    except:
+        pass
+    
+    # Fallback to a safe default
+    return "11.0"
 
 
 def get_name():
@@ -78,15 +121,19 @@ def configure(env: "SConsEnvironment"):
 
     # CPU architecture.
     if env["arch"] == "arm64":
-        print("Building for macOS 11.0+.")
-        env.Append(ASFLAGS=["-arch", "arm64", "-mmacosx-version-min=11.0"])
-        env.Append(CCFLAGS=["-arch", "arm64", "-mmacosx-version-min=11.0"])
-        env.Append(LINKFLAGS=["-arch", "arm64", "-mmacosx-version-min=11.0"])
+        # ARM64 requires macOS 11.0+ minimum
+        min_version = "11.0"
+        print(f"Building for macOS {min_version}+ (arm64).")
+        env.Append(ASFLAGS=["-arch", "arm64", f"-mmacosx-version-min={min_version}"])
+        env.Append(CCFLAGS=["-arch", "arm64", f"-mmacosx-version-min={min_version}"])
+        env.Append(LINKFLAGS=["-arch", "arm64", f"-mmacosx-version-min={min_version}"])
     elif env["arch"] == "x86_64":
-        print("Building for macOS 10.13+.")
-        env.Append(ASFLAGS=["-arch", "x86_64", "-mmacosx-version-min=10.13"])
-        env.Append(CCFLAGS=["-arch", "x86_64", "-mmacosx-version-min=10.13"])
-        env.Append(LINKFLAGS=["-arch", "x86_64", "-mmacosx-version-min=10.13"])
+        # Detect current macOS version for x86_64
+        detected_version = get_macos_version()
+        print(f"Detected macOS {detected_version}, building for macOS {detected_version}+ (x86_64).")
+        env.Append(ASFLAGS=["-arch", "x86_64", f"-mmacosx-version-min={detected_version}"])
+        env.Append(CCFLAGS=["-arch", "x86_64", f"-mmacosx-version-min={detected_version}"])
+        env.Append(LINKFLAGS=["-arch", "x86_64", f"-mmacosx-version-min={detected_version}"])
 
     env.Append(CCFLAGS=["-ffp-contract=off"])
     env.Append(CCFLAGS=["-fobjc-arc"])

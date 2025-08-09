@@ -315,7 +315,15 @@ void CameraMacOS::update_feeds() {
 #endif
 		AVCaptureDeviceDiscoverySession *session;
 		if (@available(macOS 14.0, *)) {
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= 140000
+			// Use constants when available in SDK
 			session = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:[NSArray arrayWithObjects:AVCaptureDeviceTypeExternal, AVCaptureDeviceTypeBuiltInWideAngleCamera, AVCaptureDeviceTypeContinuityCamera, nil] mediaType:AVMediaTypeVideo position:AVCaptureDevicePositionUnspecified];
+#else
+			// Use string literals when constants are not available in SDK
+			NSString *external = @"AVCaptureDeviceTypeExternal";
+			NSString *continuity = @"AVCaptureDeviceTypeContinuityCamera";
+			session = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:[NSArray arrayWithObjects:external, AVCaptureDeviceTypeBuiltInWideAngleCamera, continuity, nil] mediaType:AVMediaTypeVideo position:AVCaptureDevicePositionUnspecified];
+#endif
 		} else {
 			session = [AVCaptureDeviceDiscoverySession discoverySessionWithDeviceTypes:[NSArray arrayWithObjects:AVCaptureDeviceTypeExternalUnknown, AVCaptureDeviceTypeBuiltInWideAngleCamera, nil] mediaType:AVMediaTypeVideo position:AVCaptureDevicePositionUnspecified];
 		}
