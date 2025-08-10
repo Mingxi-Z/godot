@@ -2307,6 +2307,8 @@ void TextureStorage::_update_render_target(RenderTarget *rt) {
 					rt->msaa_2d.samples = samples;
 					rt->msaa_2d.needs_resolve = true; // Traditional MSAA requires manual resolve
 					
+					print_verbose("Creating traditional 2D MSAA with " + itos(samples) + " samples");
+					
 					// Create MSAA color renderbuffer  
 					glGenRenderbuffers(1, &rt->msaa_2d.color);
 					glBindRenderbuffer(GL_RENDERBUFFER, rt->msaa_2d.color);
@@ -2328,6 +2330,8 @@ void TextureStorage::_update_render_target(RenderTarget *rt) {
 						rt->msaa_2d.color = 0;
 						rt->msaa_2d.fbo = 0;
 						rt->msaa_2d.mode = RS::VIEWPORT_MSAA_DISABLED;
+					} else {
+						print_verbose("Successfully created traditional 2D MSAA render target with FBO " + itos(rt->msaa_2d.fbo));
 					}
 				}
 
@@ -2790,24 +2794,36 @@ void TextureStorage::render_target_do_msaa_resolve(RID p_render_target) {
 		return;
 	}
 
+	print_verbose("Starting 2D MSAA resolve for render target");
+
 	Config *config = Config::get_singleton();
 	
 	// If using GL_EXT_multisampled_render_to_texture, resolve is automatic
 	if (config->rt_msaa_supported && rt->msaa_2d.color == 0) {
 		// No manual resolve needed with the extension - it's done automatically
 		rt->msaa_2d.needs_resolve = false;
+		print_verbose("Using automatic resolve via GL_EXT_multisampled_render_to_texture");
 		return;
 	}
 
 	// Traditional MSAA resolve for when extension is not available
 	if (!rt->msaa_2d.color) {
+		print_verbose("No MSAA color renderbuffer - skipping resolve");
 		return;
 	}
 
 	// Resolve MSAA
+	print_verbose("Performing traditional MSAA resolve: " + itos(rt->msaa_2d.fbo) + " -> " + itos(rt->fbo));
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, rt->msaa_2d.fbo);
 	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rt->fbo);
 	glBlitFramebuffer(0, 0, rt->size.x, rt->size.y, 0, 0, rt->size.x, rt->size.y, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+	
+	GLenum error = glGetError();
+	if (error != GL_NO_ERROR) {
+		print_verbose("OpenGL error during MSAA resolve: " + itos(error));
+	} else {
+		print_verbose("MSAA resolve completed successfully");
+	}
 
 	// Mark as resolved
 	rt->msaa_2d.needs_resolve = false;
@@ -2861,9 +2877,11 @@ void TextureStorage::render_target_set_msaa(RID p_render_target, RS::ViewportMSA
 		return;
 	}
 
+	print_verbose("Setting 2D MSAA mode to " + itos(p_msaa) + " for render target");
 	_clear_render_target(rt);
 	rt->msaa_2d.mode = p_msaa;
 	_update_render_target(rt);
+	print_verbose("2D MSAA setup complete - FBO: " + itos(rt->msaa_2d.fbo) + ", mode: " + itos(rt->msaa_2d.mode));
 }
 
 RS::ViewportMSAA TextureStorage::render_target_get_msaa(RID p_render_target) const {
@@ -2967,8 +2985,10 @@ GLuint TextureStorage::render_target_get_fbo(RID p_render_target) const {
 		// Mark for resolve - we need to cast away const since this is a state change
 		// Note: When using GL_EXT_multisampled_render_to_texture, resolve is automatic
 		const_cast<RenderTarget*>(rt)->msaa_2d.needs_resolve = true;
+		print_verbose("Using 2D MSAA FBO " + itos(rt->msaa_2d.fbo) + " with " + itos(rt->msaa_2d.samples) + " samples");
 		return rt->msaa_2d.fbo;
 	}
+	print_verbose("Using regular FBO " + itos(rt->fbo) + " (2D MSAA mode: " + itos(rt->msaa_2d.mode) + ", FBO: " + itos(rt->msaa_2d.fbo) + ")");
 	return rt->fbo;
 }
 
@@ -3314,8 +3334,13 @@ void TextureStorage::render_target_copy_to_back_buffer(RID p_render_target, cons
 	ERR_FAIL_NULL(rt);
 	ERR_FAIL_COND(rt->direct_to_screen);
 
+	print_line("SCREEN_TEXTURE: Starting backbuffer copy for render target");
+
 	if (rt->backbuffer_fbo == 0) {
+		print_line("SCREEN_TEXTURE: Creating new backbuffer FBO");
 		_create_render_target_backbuffer(rt);
+	} else {
+		print_line("SCREEN_TEXTURE: Using existing backbuffer FBO " + itos(rt->backbuffer_fbo));
 	}
 
 	Rect2i region;
@@ -3333,9 +3358,11 @@ void TextureStorage::render_target_copy_to_back_buffer(RID p_render_target, cons
 	glBindFramebuffer(GL_FRAMEBUFFER, rt->backbuffer_fbo);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, rt->color);
+	print_line("SCREEN_TEXTURE: Copying from color texture " + itos(rt->color) + " to backbuffer " + itos(rt->backbuffer));
 	Rect2 normalized_region = region;
 	normalized_region.position = normalized_region.position / Size2(rt->size);
 	normalized_region.size = normalized_region.size / Size2(rt->size);
+	print_line("SCREEN_TEXTURE: Copy region: " + String(normalized_region));
 	GLES3::CopyEffects::get_singleton()->copy_to_and_from_rect(normalized_region);
 
 	if (p_gen_mipmaps) {

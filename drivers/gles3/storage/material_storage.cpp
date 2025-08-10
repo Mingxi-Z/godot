@@ -2635,6 +2635,13 @@ void CanvasShaderData::set_code(const String &p_code) {
 	blend_mode = BlendMode(blend_modei);
 	uses_screen_texture = gen_code.uses_screen_texture;
 	uses_screen_texture_mipmaps = gen_code.uses_screen_texture_mipmaps;
+	
+	// Debug: Print screen texture usage
+	if (uses_screen_texture) {
+		print_line("SCREEN_TEXTURE DEBUG: Shader compiled with uses_screen_texture = true");
+	} else {
+		print_line("SCREEN_TEXTURE DEBUG: Shader compiled with uses_screen_texture = false");
+	}
 
 #if 0
 	print_line("**compiling shader:");

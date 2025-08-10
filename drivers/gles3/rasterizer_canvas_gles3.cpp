@@ -425,12 +425,15 @@ void RasterizerCanvasGLES3::canvas_render_items(RID p_to_render_target, Item *p_
 		if (material.is_valid()) {
 			GLES3::CanvasMaterialData *md = static_cast<GLES3::CanvasMaterialData *>(material_storage->material_get_data(material, RS::SHADER_CANVAS_ITEM));
 			if (md && md->shader_data->valid) {
+				print_line("SCREEN_TEXTURE: Checking material, uses_screen_texture = " + String(md->shader_data->uses_screen_texture ? "true" : "false"));
 				if (md->shader_data->uses_screen_texture && canvas_group_owner == nullptr) {
 					if (!material_screen_texture_cached) {
+						print_line("SCREEN_TEXTURE: Material uses screen texture, setting backbuffer_copy = true");
 						backbuffer_copy = true;
 						back_buffer_rect = Rect2();
 						backbuffer_gen_mipmaps = md->shader_data->uses_screen_texture_mipmaps;
 					} else if (!material_screen_texture_mipmaps_cached) {
+						print_line("SCREEN_TEXTURE: Material needs screen texture mipmaps");
 						backbuffer_gen_mipmaps = md->shader_data->uses_screen_texture_mipmaps;
 					}
 				}
@@ -516,6 +519,7 @@ void RasterizerCanvasGLES3::canvas_render_items(RID p_to_render_target, Item *p_
 		}
 
 		if (backbuffer_copy) {
+			print_line("SCREEN_TEXTURE: Executing backbuffer copy operation");
 			if (update_skeletons) {
 				mesh_storage->update_mesh_instances();
 				update_skeletons = false;
