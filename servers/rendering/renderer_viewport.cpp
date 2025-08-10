@@ -685,6 +685,7 @@ void RendererViewport::_draw_viewport(Viewport *p_viewport) {
 				// There may be an outstanding clear request if a clear was requested, but no 2D elements were drawn.
 				// Clear now otherwise we copy over garbage from the render target.
 				RSG::texture_storage->render_target_do_clear_request(p_viewport->render_target);
+				RSG::texture_storage->render_target_do_msaa_resolve(p_viewport->render_target);
 				if (!can_draw_3d) {
 					RSG::scene->render_empty_scene(p_viewport->render_buffers, p_viewport->scenario, p_viewport->shadow_atlas);
 				} else {

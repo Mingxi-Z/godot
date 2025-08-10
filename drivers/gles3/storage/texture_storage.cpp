@@ -3336,6 +3336,8 @@ void TextureStorage::render_target_copy_to_back_buffer(RID p_render_target, cons
 
 	print_line("SCREEN_TEXTURE: Starting backbuffer copy for render target");
 
+	// Ensure MSAA content is resolved before copying to backbuffer
+	render_target_do_msaa_resolve(p_render_target);
 	if (rt->backbuffer_fbo == 0) {
 		print_line("SCREEN_TEXTURE: Creating new backbuffer FBO");
 		_create_render_target_backbuffer(rt);
