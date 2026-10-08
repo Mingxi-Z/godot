@@ -2681,8 +2681,15 @@ void RenderForwardClustered::_render_buffers_debug_draw(const RenderDataRD *p_re
 
 	if (get_debug_draw_mode() == RSE::VIEWPORT_DEBUG_DRAW_GI_BUFFER && rb->has_texture(RB_SCOPE_GI, RB_TEX_AMBIENT)) {
 		Size2i rtsize = texture_storage->render_target_get_size(render_target);
-		RID ambient_texture = rb->get_texture(RB_SCOPE_GI, RB_TEX_AMBIENT);
-		RID reflection_texture = rb->get_texture(RB_SCOPE_GI, RB_TEX_REFLECTION);
+		RID ambient_texture;
+		RID reflection_texture;
+		if (rb->has_texture(RB_SCOPE_GI, RB_TEX_AMBIENT_UPSCALED)) {
+			ambient_texture = rb->get_texture(RB_SCOPE_GI, RB_TEX_AMBIENT_UPSCALED);
+			reflection_texture = rb->get_texture(RB_SCOPE_GI, RB_TEX_REFLECTION_UPSCALED);
+		} else {
+			ambient_texture = rb->get_texture(RB_SCOPE_GI, RB_TEX_AMBIENT);
+			reflection_texture = rb->get_texture(RB_SCOPE_GI, RB_TEX_REFLECTION);
+		}
 		copy_effects->copy_to_fb_rect(ambient_texture, texture_storage->render_target_get_rd_framebuffer(render_target), Rect2(Vector2(), rtsize), false, false, false, true, reflection_texture, rb->get_view_count() > 1);
 	}
 }
@@ -3731,7 +3738,15 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		RD::Uniform u;
 		u.binding = 28;
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-		RID texture = rb_data.is_valid() && rb->has_texture(RB_SCOPE_GI, RB_TEX_AMBIENT) ? rb->get_texture(RB_SCOPE_GI, RB_TEX_AMBIENT) : texture_storage->texture_rd_get_default(is_multiview ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
+		RID texture = texture_storage->texture_rd_get_default(is_multiview ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
+
+		if (rb_data.is_valid()) {
+			if (rb->has_texture(RB_SCOPE_GI, RB_TEX_AMBIENT_UPSCALED)) {
+				texture = rb->get_texture(RB_SCOPE_GI, RB_TEX_AMBIENT_UPSCALED);
+			} else if (rb->has_texture(RB_SCOPE_GI, RB_TEX_AMBIENT)) {
+				texture = rb->get_texture(RB_SCOPE_GI, RB_TEX_AMBIENT);
+			}
+		}
 		u.append_id(texture);
 		uniforms.push_back(u);
 	}
@@ -3740,7 +3755,14 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		RD::Uniform u;
 		u.binding = 29;
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
-		RID texture = rb_data.is_valid() && rb->has_texture(RB_SCOPE_GI, RB_TEX_REFLECTION) ? rb->get_texture(RB_SCOPE_GI, RB_TEX_REFLECTION) : texture_storage->texture_rd_get_default(is_multiview ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
+		RID texture = texture_storage->texture_rd_get_default(is_multiview ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_BLACK : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_BLACK);
+		if (rb.is_valid()) {
+			if (rb->has_texture(RB_SCOPE_GI, RB_TEX_REFLECTION_UPSCALED)) {
+				texture = rb->get_texture(RB_SCOPE_GI, RB_TEX_REFLECTION_UPSCALED);
+			} else if (rb->has_texture(RB_SCOPE_GI, RB_TEX_REFLECTION)) {
+				texture = rb->get_texture(RB_SCOPE_GI, RB_TEX_REFLECTION);
+			}
+		}
 		u.append_id(texture);
 		uniforms.push_back(u);
 	}

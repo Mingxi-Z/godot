@@ -37,6 +37,7 @@
 #include "servers/rendering/renderer_rd/environment/sky.h"
 #include "servers/rendering/renderer_rd/pipeline_deferred_rd.h"
 #include "servers/rendering/renderer_rd/shaders/environment/gi.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/environment/gi_upscale.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/environment/sdfgi_debug.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/environment/sdfgi_debug_probes.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/environment/sdfgi_direct_light.glsl.gen.h"
@@ -54,6 +55,9 @@
 
 #define RB_TEX_AMBIENT SNAME("ambient")
 #define RB_TEX_REFLECTION SNAME("reflection")
+
+#define RB_TEX_AMBIENT_UPSCALED SNAME("ambient_upscaled")
+#define RB_TEX_REFLECTION_UPSCALED SNAME("reflection_upscaled")
 
 // Forward declare RenderDataRD and RendererSceneRenderRD so we can pass it into some of our methods, these classes are pretty tightly bound
 class RenderDataRD;
@@ -826,6 +830,10 @@ public:
 	GiShaderRD shader;
 	RID shader_version;
 	PipelineDeferredRD pipelines[SHADER_SPECIALIZATION_VARIATIONS][MODE_MAX];
+
+	GiUpscaleShaderRD upscale_shader;
+	RID upscale_shader_version;
+	PipelineDeferredRD upscale_pipeline;
 
 	GI();
 	~GI();

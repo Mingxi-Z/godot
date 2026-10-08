@@ -3527,6 +3527,7 @@ GI::~GI() {
 	}
 
 	sdfgi_shader.debug_pipeline.free();
+	upscale_pipeline.free();
 
 	for (int i = 0; i < SDFGIShader::DIRECT_LIGHT_MODE_MAX; i++) {
 		sdfgi_shader.direct_light_pipeline[i].free();
@@ -3567,6 +3568,9 @@ GI::~GI() {
 	}
 	if (sdfgi_shader.preprocess_shader.is_valid()) {
 		sdfgi_shader.preprocess.version_free(sdfgi_shader.preprocess_shader);
+	}
+	if (upscale_shader_version.is_valid()) {
+		upscale_shader.version_free(upscale_shader_version);
 	}
 
 	singleton = nullptr;
@@ -3808,6 +3812,15 @@ void GI::init(SkyRD *p_sky) {
 			}
 		}
 	}
+	{
+		Vector<String> upscale_modes;
+		upscale_modes.push_back("");
+		upscale_shader.initialize(upscale_modes);
+
+		upscale_shader_version = upscale_shader.version_create();
+		RID shader_rid = upscale_shader.version_get_shader(upscale_shader_version, 0);
+		upscale_pipeline.create_compute_pipeline(shader_rid);
+	}
 	default_voxel_gi_buffer = RD::get_singleton()->uniform_buffer_create(sizeof(VoxelGIData) * MAX_VOXEL_GI_INSTANCES);
 	half_resolution = GLOBAL_GET("rendering/global_illumination/gi/use_half_resolution");
 }
@@ -3991,6 +4004,8 @@ void GI::process_gi(Ref<RenderSceneBuffersRD> p_render_buffers, const RID *p_nor
 		uint32_t usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
 
 		if (half_resolution) {
+			p_render_buffers->create_texture(RB_SCOPE_GI, RB_TEX_AMBIENT_UPSCALED, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, usage_bits, RD::TEXTURE_SAMPLES_1, size);
+			p_render_buffers->create_texture(RB_SCOPE_GI, RB_TEX_REFLECTION_UPSCALED, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, usage_bits, RD::TEXTURE_SAMPLES_1, size);
 			size.x >>= 1;
 			size.y >>= 1;
 		}
@@ -4274,6 +4289,73 @@ void GI::process_gi(Ref<RenderSceneBuffersRD> p_render_buffers, const RID *p_nor
 
 	RD::get_singleton()->compute_list_end();
 	RD::get_singleton()->draw_command_end_label();
+
+	if (rbgi->using_half_size_gi) {
+		RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
+		RD::get_singleton()->draw_command_begin_label("Gi Upscale");
+
+		RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, upscale_pipeline.get_rid());
+
+		RID gi_upscale_shader = upscale_shader.version_get_shader(upscale_shader_version, 0);
+
+		RID sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+		RID guide_sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+		for (uint32_t v = 0; v < p_view_count; v++) {
+			{
+				RID ambient_buffer = p_render_buffers->get_texture_slice(RB_SCOPE_GI, RB_TEX_AMBIENT, v, 0);
+				RID reflection_buffer = p_render_buffers->get_texture_slice(RB_SCOPE_GI, RB_TEX_REFLECTION, v, 0);
+				RID depth_buffer = p_render_buffers->get_depth_texture(v);
+				RID normal_roughness_buffer = p_normal_roughness_slices[v];
+
+				RD::Uniform u_ambient;
+				u_ambient.binding = 0;
+				u_ambient.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+				u_ambient.append_id(sampler);
+				u_ambient.append_id(ambient_buffer);
+
+				RD::Uniform u_reflection;
+				u_reflection.binding = 1;
+				u_reflection.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+				u_reflection.append_id(sampler);
+				u_reflection.append_id(reflection_buffer);
+
+				RD::Uniform u_depth;
+				u_depth.binding = 2;
+				u_depth.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+				u_depth.append_id(guide_sampler);
+				u_depth.append_id(depth_buffer);
+
+				RD::Uniform u_normal_roughness;
+				u_normal_roughness.binding = 3;
+				u_normal_roughness.uniform_type = RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE;
+				u_normal_roughness.append_id(guide_sampler);
+				u_normal_roughness.append_id(normal_roughness_buffer);
+
+				RID input_set = UniformSetCacheRD::get_singleton()->get_cache(gi_upscale_shader, 0, u_ambient, u_reflection, u_depth, u_normal_roughness);
+				RD::get_singleton()->compute_list_bind_uniform_set(compute_list, input_set, 0);
+			}
+			{
+				RID ambient_upscaled = p_render_buffers->get_texture_slice(RB_SCOPE_GI, RB_TEX_AMBIENT_UPSCALED, v, 0);
+				RID reflection_upscaled = p_render_buffers->get_texture_slice(RB_SCOPE_GI, RB_TEX_REFLECTION_UPSCALED, v, 0);
+
+				RD::Uniform u_ambient_output;
+				u_ambient_output.binding = 0;
+				u_ambient_output.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+				u_ambient_output.append_id(ambient_upscaled);
+
+				RD::Uniform u_reflection_output;
+				u_reflection_output.binding = 1;
+				u_reflection_output.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+				u_reflection_output.append_id(reflection_upscaled);
+
+				RID output_set = UniformSetCacheRD::get_singleton()->get_cache(gi_upscale_shader, 1, u_ambient_output, u_reflection_output);
+				RD::get_singleton()->compute_list_bind_uniform_set(compute_list, output_set, 1);
+			}
+			RD::get_singleton()->compute_list_dispatch_threads(compute_list, internal_size.x, internal_size.y, 1);
+		}
+		RD::get_singleton()->compute_list_end();
+		RD::get_singleton()->draw_command_end_label();
+	}
 }
 
 RID GI::voxel_gi_instance_create(RID p_base) {
